@@ -1,4 +1,6 @@
 #include <ros/ros.h>
+#include <time.h>
+#include <vector>
 // PCL specific includes
 #include <sensor_msgs/PointCloud2.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -18,6 +20,8 @@
 #include <pcl/segmentation/extract_clusters.h>
 #include <pcl/filters/passthrough.h>
 
+#include <asurt_msgs/CloudArray.h>
+
 ros::Publisher pub;
 
 typedef pcl::PointXYZ PointT;
@@ -26,8 +30,10 @@ void
 cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 {
   // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
+  ros::Time begin = ros::Time::now();
   pcl::PointCloud<pcl::PointXYZ> cloud;
   pcl::fromROSMsg (*input, cloud);
+  std::cout<<"ana ast2blt mn lidar 1"<< std::endl;
 
   // Data containers used
   // Create the filtering object: downsample the dataset using a leaf size of 1cm
@@ -83,10 +89,12 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
   std::cout << "Number of clusters is equal to " << cluster_indices.size () << std::endl;
  
-  pcl::PointCloud<pcl::PointXYZI> TotalCloud; 
+  asurt_msgs::CloudArray cloud_array = asurt_msgs::CloudArray();
+  std::vector<pcl::PointCloud<pcl::PointXYZI>> cluster_pointclouds(cluster_indices.size()); 
   int j = 0;
   for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin (); it != cluster_indices.end (); ++it)
   {
+    cluster_pointclouds[j] = pcl::PointCloud<pcl::PointXYZI>();
     for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); ++pit)
     {
         pcl::PointXYZ pt = cloud_filtered->points[*pit];
@@ -94,19 +102,27 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
             pt2.x = pt.x, pt2.y = pt.y, pt2.z = pt.z;
             pt2.intensity = (float)(j + 1);
 
-            TotalCloud.push_back(pt2);
+            // Add the pooint to its respective cluster's pointcloud.
+            cluster_pointclouds[j].push_back(pt2);
     }
+
+    // Convert To ROS data type 
+    pcl::PCLPointCloud2 cloud_p;
+    pcl::toPCLPointCloud2(cluster_pointclouds[j], cloud_p);
+    
+    sensor_msgs::PointCloud2 output; 
+    pcl_conversions::fromPCL(cloud_p, output);
+    output.header.frame_id = "velodyne";
+
+    cloud_array.CloudArray.push_back(output);
+
     j++;
   }
   
-    // Convert To ROS data type 
-  pcl::PCLPointCloud2 cloud_p;
-  pcl::toPCLPointCloud2(TotalCloud, cloud_p);
+  pub.publish(cloud_array); 
+  ros::Time end = ros::Time::now();
+  std::cout<<"time of cluster:"<< (end-begin)*1000 <<std::endl;
   
-  sensor_msgs::PointCloud2 output; 
-  pcl_conversions::fromPCL(cloud_p, output);
-  output.header.frame_id = "velodyne";   
-  pub.publish(output); 
  
   ROS_INFO("published it."); 
 }
@@ -119,11 +135,11 @@ main (int argc, char** argv)
   ros::NodeHandle nh;
 
   // Create a ROS subscriber for the input point cloud
-  ros::Subscriber sub = nh.subscribe ("/velodyne_points", 1, cloud_cb);
+  ros::Subscriber sub = nh.subscribe ("/perception/filtered", 1, cloud_cb);
 
   // Create a ROS publisher for the output model coefficients
   // pub = nh.advertise<pcl_msgs::ModelCoefficients> ("pclplaneoutput", 1);
-  pub = nh.advertise<sensor_msgs::PointCloud2> ("output", 1);
+  pub = nh.advertise<asurt_msgs::CloudArray> ("/clusters_pcs", 1);
  
   // Spin
   ros::spin ();
